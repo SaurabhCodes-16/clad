@@ -690,6 +690,7 @@ StmtDiff BaseForwardModeVisitor::VisitConditionalOperator(
   StmtDiff ifTrueDiff = Visit(CO->getTrueExpr());
   StmtDiff ifFalseDiff = Visit(CO->getFalseExpr());
   --m_ConditionalOperandDepth;
+  matchBranchTangents(ifTrueDiff, ifFalseDiff, CO->getType());
 
   cond = StoreAndRef(cond);
   cond = m_Sema
@@ -2237,8 +2238,11 @@ StmtDiff BaseForwardModeVisitor::VisitCXXFunctionalCastExpr(
   StmtDiff castExprDiff = Visit(FCE->getSubExpr());
   Expr* clonedFCE = BuildFunctionalCast(FCE->getTypeInfoAsWritten(),
                                         FCE->getType(), castExprDiff.getExpr());
-  Expr* derivedFCE = BuildFunctionalCast(
-      FCE->getTypeInfoAsWritten(), FCE->getType(), castExprDiff.getExpr_dx());
+  Expr* dx = castExprDiff.getExpr_dx();
+  if (Expr* castDx = castTangent(dx, FCE))
+    return {clonedFCE, castDx};
+  Expr* derivedFCE =
+      BuildFunctionalCast(FCE->getTypeInfoAsWritten(), FCE->getType(), dx);
   return {clonedFCE, derivedFCE};
 }
 
@@ -2252,6 +2256,8 @@ BaseForwardModeVisitor::VisitCStyleCastExpr(const CStyleCastExpr* CSCE) {
                            CSCE->getLParenLoc(), CSCE->getTypeInfoAsWritten(),
                            CSCE->getRParenLoc(), subExprDiff.getExpr())
                        .get();
+  if (Expr* castDx = castTangent(subExprDiff.getExpr_dx(), CSCE))
+    return StmtDiff(castExpr, castDx);
   Expr* castExprDiff =
       m_Sema
           .BuildCStyleCastExpr(CSCE->getLParenLoc(),
@@ -2313,6 +2319,8 @@ BaseForwardModeVisitor::VisitCXXNamedCastExpr(const CXXNamedCastExpr* NCE) {
   // A subexpression without a tangent (e.g. the address of an object that
   // does not depend on the differentiation variable) has nothing to cast.
   Expr* subExprDx = subExprDiff.getExpr_dx();
+  if (Expr* castDx = castTangent(subExprDx, NCE))
+    return StmtDiff(castExpr, castDx);
   Expr* castExprDiff = nullptr;
   if (subExprDx && !subExprDx->getType()->isVoidType())
     castExprDiff =
